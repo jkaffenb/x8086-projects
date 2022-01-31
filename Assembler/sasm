@@ -1,0 +1,633 @@
+#!/usr/bin/python3
+
+
+#issues
+#cannot take a hex starting address
+
+import sys
+import re
+import math
+import binascii
+
+
+class lineobject:
+    def __init__(self, label=None, mnemonic=None, parameters=None, location=None,
+                        code=None):
+        self.label = label
+        self.mnemonic = mnemonic
+        self.parameters = parameters
+        self.location = location
+        self.code = code
+
+    def printLine(self):
+        return print(self.location, self.label, self.mnemonic, self.parameters,
+                        self.code)
+
+registerDict = {
+"A":0,
+"X":1,
+"L":2,
+"B":3,
+"S":4,
+"T":5,
+"F":6,
+"PC":8,
+"SW":9,
+}
+myDict = {
+"ADD":("m", "3/4", "18"),
+"ADDF":("m", "3/4", "58"),
+"ADDR":("r1,r2", "2", "90"),
+"AND":("m", "3/4", "40"),
+"CLEAR":("r1", "2", "B4"),
+"COMP":("m", "3/4", "28"),
+"COMPF":("m", "3/4", "88"),
+"COMPR":("r1,r2", "2", "A0"),
+"DIV":("m", "3/4", "24"),
+"DIVF":("m", "3/4", "64"),
+"DIVR":("r1,r2", "2", "9C"),
+"FIX":("", "1", "C4"),
+"FLOAT":("", "1", "C0"),
+"HIO":("", "1", "F4"),
+"J":("m", "3/4", "3C"),
+"JEQ":("m", "3/4", "30"),
+"JGT":("m", "3/4", "34"),
+"JLT":("m", "3/4", "38"),
+"JSUB":("m", "3/4", "48"),
+"LDA":("m", "3/4", "00"),
+"LDB":("m", "3/4", "68"),
+"LDCH":("m", "3/4", "50"),
+"LDF":("m", "3/4", "70"),
+"LDL":("m", "3/4", "08"),
+"LDS":("m", "3/4", "6C"),
+"LDT":("m", "3/4", "74"),
+"LDX":("m", "3/4", "04"),
+"LPS":("m", "3/4", "D0"),
+"MUL":("m", "3/4", "20"),
+"MULF":("m", "3/4", "60"),
+"MULR":("r1,r2", "2", "98"),
+"NORM":("", "1", "C8"),
+"OR":("m", "3/4", "44"),
+"RD":("m", "3/4", "D8"),
+"RMO":("r1,r2", "2", "AC"),
+"RSUB":("", "3/4", "4C"),
+"SHIFTL":("r1,n", "2", "A4"),
+"SHIFTR":("r1,n", "2", "A8"),
+"SIO":("", "1", "F0"),
+"SSK":("m", "3/4", "EC"),
+"STA":("m", "3/4", "0C"),
+"STB":("m", "3/4", "78"),
+"STCH":("m", "3/4", "54"),
+"STF":("m", "3/4", "80"),
+"STI":("m", "3/4", "D4"),
+"STL":("m", "3/4", "14"),
+"STS":("m", "3/4", "7C"),
+"STSW":("m", "3/4", "E8"),
+"STT":("m", "3/4", "84"),
+"STX":("m", "3/4", "10"),
+"SUB":("m", "3/4", "1C"),
+"SUBF":("m", "3/4", "5C"),
+"SUBR":("r1,r2", "2", "94"),
+"SVC":("n", "2", "B0"),
+"TD":("m", "3/4", "E0"),
+"TIO":("", "1", "F8"),
+"TIX":("m", "3/4", "2C"),
+"TIXR":("r1", "2", "B8"),
+"WD":("m", "3/4", "DC")}
+labelDict = {}
+lineobjectlist = []
+finalinstructiontable = []
+RES = 0
+
+
+def twoscomp(value):
+    value = bin(value * -1)
+    value = value[2:]
+    value = (24 - len(value)) * "0" + value
+    lst = []
+    for char in value:
+        lst.append(char)
+    for i in range(len(lst)):
+        if lst[i] == "0":
+            lst[i] = "1"
+        else:
+            lst[i] = "0"
+    value = ""
+    for byte in lst:
+        value += byte
+    value = int(value, 2)
+    value += 1
+    return hex(value)[2:]
+
+def nontwoscomp(value):
+    answer = ""
+    value = bin(value * -1)
+    value = value[3:]
+    return 5 * "0" + hex(int(value, 2))[2:]
+
+
+def duplicatelabel(label):
+    for key in labelDict:
+        if label.upper() == key:
+            print("Duplicate Labels!")
+            sys.exit(1)
+    return
+
+def parse_first_line(line):
+    line = line[:40]
+    labelloc = re.search("^\s*(\w+):\s+", line)
+    startloc = re.search("^\s*start\s+(\d+)\s*$", line)
+    duplicate_label = re.findall("(\w+):\s+", line)
+    duplicate_start = re.findall("\s*start\s+(\d+)\s*$", line)
+
+# check if there are duplicate labels or start instructions
+    if len(duplicate_label) > 1 or len(duplicate_start) > 1:
+        print("invalid first line!")
+        sys.exit(1)
+
+    if labelloc != None:
+        label = labelloc[1]
+        x = re.search(labelloc[0], line)
+        line = line[x.span()[1]:]
+        startloc = re.search("^\s*start\s+(\d+)\s*$", line)
+
+    if startloc != None:
+        address = startloc.group(1)
+        if labelloc != None:
+            address = add_int_hex(address, 0)
+            labelDict.update({label.upper(): address.upper()})
+        if int(address, 10) > 10000:
+            print("error")
+            sys.exit(1)
+        return address
+
+    print("Error!")
+    sys.exit(1)
+
+def parse(line, address):
+    line = line[:40]
+    lineobject1 = lineobject()
+    lineobject1.location = address
+
+    blankline = re.search("^\s*$", line)
+    if blankline != None:
+        return address
+
+    # Check for commented line
+    comment = re.search("^\s*[.]", line)
+    if comment != None:
+        return address
+
+    labelloc = re.search("^\s*([a-zA-Z_]\w*):", line)
+    if labelloc != None:
+        label = labelloc[1]
+        lineobject1.label = label
+        line = line[labelloc.span()[1]:]
+        duplicatelabel(label)
+        labelDict.update({label.upper(): address.upper()})
+
+
+    #if you find a start, call parse first line
+    startloc = re.search("^\s*start\s+(\d+)\s*$", line)
+    if startloc != None:
+        return parse_first_line(line)
+
+    endloc = re.search("^\s*END\s*", line, re.IGNORECASE)
+    if endloc != None:
+        lineobject1.mnemonic = "END"
+        address = "end"
+        lineobjectlist.append(lineobject1)
+        return address
+
+
+    #check if byte instruction was called
+    byte = re.search("\A\s*BYTE\s+", line, re.IGNORECASE)
+    if byte != None:
+        lineobject1.mnemonic = "BYTE"
+        line = line[byte.span()[1]:]
+        stringloc = re.search("^c'(.*)'\s*$", line, re.IGNORECASE)
+        if stringloc != None:
+            lineobject1.parameters  = stringloc[0]
+            address = add_int_hex(address, len(stringloc[1]))
+        stringloc = re.search("^x'(.*)'\s*$", line, re.IGNORECASE)
+        if stringloc != None:
+            lineobject1.parameters = stringloc[0]
+            address = add_int_hex(address, math.ceil(len(stringloc[1])/2))
+        stringloc = re.search("^[+]\d+\s*$|^[-]\d+\s*$|^\d+\s*$", line, re.IGNORECASE)
+        if stringloc != None:
+            lineobject1.parameters = stringloc[0]
+            address = add_int_hex(address, 1)
+        lineobjectlist.append(lineobject1)
+        return address
+
+    #check if word instruction was called
+    word = re.search("\A\s*WORD\s+", line, re.IGNORECASE)
+    if word != None:
+        lineobject1.mnemonic = "WORD"
+        line = line[word.span()[1]:]
+        stringloc = re.search("^\s*\w+\s*$|^[-]\s*\w+\s*$|^[+]\s*\w+\s*$", line, re.IGNORECASE)
+        if stringloc != None:
+            lineobject1.parameters = stringloc[0]
+            address = add_int_hex(address, 3)
+            lineobjectlist.append(lineobject1)
+            return address
+        else:
+            print("invalid string")
+            sys.exit(1)
+    #check if resw instruction was called
+    resw = re.search("\A\s*RESW\s+", line, re.IGNORECASE)
+    if resw != None:
+        lineobject1.mnemonic = "RESW"
+        line = line[resw.span()[1]:]
+        stringloc = re.search("^\s*(\w+)\s*$", line, re.IGNORECASE)
+        if stringloc != None:
+            lineobject1.parameters = stringloc[0]
+            address = add_int_hex(address, 3 * int(stringloc[1]))
+            lineobjectlist.append(lineobject1)
+            return address
+
+    #check if resb instruction was called
+    resb = re.search("\A\s*RESB\s+", line, re.IGNORECASE)
+    if resb != None:
+        lineobject1.mnemonic = "RESB"
+        line = line[resb.span()[1]:]
+        stringloc = re.search("^\s*(\d+)\s*$", line, re.IGNORECASE)
+        if stringloc != None:
+            lineobject1.parameters = stringloc[0]
+            address = add_int_hex(address, int(stringloc[1]))
+            lineobjectlist.append(lineobject1)
+            return address
+
+    plusinstruct = re.search("^\s*[+](\w+)\s+", line)
+    if plusinstruct != None:
+        instruction = plusinstruct[1].upper()
+        lineobject1.mnemonic = "+" + instruction
+        line = line[plusinstruct.span()[1]:]
+        lineobject1.parameters = line
+        checkvalid(instruction, line)
+        address = add_int_hex(address, 4)
+        lineobjectlist.append(lineobject1)
+        return address
+
+    nonplusinstruct = re.search("^\s*(\w+)\s+", line)
+    if nonplusinstruct != None:
+        instruction = nonplusinstruct[1].upper()
+        lineobject1.mnemonic = instruction
+        line = line[nonplusinstruct.span()[1]:]
+        lineobject1.parameters = line
+        checkvalid(instruction, line)
+        instructionsize = myDict[instruction][1]
+        if instructionsize == "3/4":
+            address = add_int_hex(address, 3)
+            lineobjectlist.append(lineobject1)
+            return address
+        if instructionsize == "2":
+            address = add_int_hex(address, 2)
+            lineobjectlist.append(lineobject1)
+            return address
+        else:
+            address = add_int_hex(address, 1)
+            lineobjectlist.append(lineobject1)
+            return address
+    print("should not have made it this far")
+    sys.exit(1)
+def checkvalid(instruction, line):
+    if instruction == "END":
+        print("didnt catch end, go to check valid")
+        sys.exit(0)
+    format = myDict[instruction][0]
+    lineformat = re.search("^(\w+),\s*(\w+)\s*$", line)
+    if (format == "r1,r2" or format == "r1,n") and lineformat != None:
+        return True
+    lineformat = re.search("^(\w+)\s*$", line)
+    if format == "r1" and lineformat != None:
+        return True
+    lineformat = re.search("^#(\w+)\s*|\s*(\w+)\s*$", line)
+    if format == "m" and lineformat != None:
+        return True
+    lineformat = re.search("^(\d+)\s*$", line)
+    if format == "n" and lineformat != None:
+        return True
+    lineformat = re.search("", line)
+    if format == "" and line == "":
+        return True
+    sys.exit(1)
+
+def PrintSymbolTable():
+    dict = labelDict
+    print("Symbols:")
+    for symbol in sorted(dict):
+        print("  ", end="")
+        print(symbol, end="")
+        print(":", end=" ")
+        print(dict[symbol])
+    return
+
+def add_int_hex(address, value):
+    #don't know what to do if bigger than FFFFF
+    dec_address = int(address, 16)
+    dec_address = dec_address + value
+    address = hex(dec_address)
+
+    mul = 6 - len(address[2:])
+
+    return "0" * mul + address[2:]
+
+def getinstruction(lineobject):
+    global RES
+    location = lineobject.location
+    label = lineobject.label
+    mnemonic = lineobject.mnemonic
+    parameters = lineobject.parameters
+    code = ""
+
+    if mnemonic == "END":
+        return
+    if mnemonic == "start":
+        return
+    if mnemonic[0] == "+":
+        lineobject.code = Type4(mnemonic, parameters, location, mode=None)
+        return
+    if mnemonic == "RESW" or mnemonic == "RESB":
+        lineobject.code = "032000"
+        #set first lineobject code to none
+        lineobjectlist[0].code = None
+        RES = 1
+        return
+    if mnemonic == "WORD":
+        temp = int(parameters, 16)
+        if temp < 0:
+            lineobject.code = twoscomp(int(parameters))
+        else:
+            lineobject.code = nontwoscomp(int(parameters))
+        return
+    if mnemonic == "BYTE":
+        if parameters[0] == "c" or parameters[0] == "C":
+            for character in parameters[2:-2]:
+                code = code + hex(ord(character))[2:]
+            lineobject.code = code
+            return
+        if parameters[0] == "x" or parameters[0] == "X":
+            code = parameters[2:-2]
+            if len(code) % 2 != 0:
+                code = "0" + code
+            lineobject.code = code
+            return
+        lineobject.code = hex(int(parameters))[2:]
+        return
+
+    format = myDict[mnemonic.upper()][1]
+    if format == "1":
+        lineobject.code = Type1(mnemonic)
+        return
+    if format == "2":
+        lineobject.code = Type2(mnemonic, parameters)
+        return
+    if format == "3/4":
+        lineobject.code = Type3(mnemonic, parameters, location, mode=None)
+        return
+    print("strange things are happening", lineobject.printLine())
+    sys.exit(1)
+
+def Type1(instruction):
+    return myDict[instruction][2]
+
+def Type2(instruction, parameters):
+    opcode = myDict[instruction][2]
+    fields = myDict[instruction][0]
+
+    if fields == "r1,r2":
+        parameters = re.search("\s*(\w+),\s*(\w+)", parameters)
+        r1 = registerDict[parameters[1].upper()]
+        r2 = registerDict[parameters[2].upper()]
+        instruction = str(opcode) + str(r1) + str(r2)
+    if fields == "r1,n":
+        parameters = re.search("\s*(\w+),\s*(\w+)", parameters)
+        r1 = registerDict[parameters[1].upper()]
+        num = parameters[2]
+        num = str(int(num) - 1)
+
+        instruction = str(opcode) + str(r1) + hex(int(num))[2:]
+    if fields == "r1":
+        parameters = re.search("\s*(\w+)", parameters)
+        r1 = registerDict[parameters[1].upper()]
+        num = "0"
+        instruction = str(opcode) + str(r1) + num
+    if fields == "n":
+        parameters = re.search("\s*(\w+)", parameters)
+        r1 = parameters[1]
+        instruction = opcode + r1 + "0"
+    return instruction
+
+def sicpossible(parameters):
+    case1 = re.search("\s*(\w+)", parameters)
+    if case1 != None:
+        register = case1[1].upper()
+        return register == "B" or register == "S" or register == "T" or register == "F"
+    case2 = re.search("\s*(\w+),\s*(\w+)", parameters)
+    if case2 != None:
+        register = case2[2].upper()
+        return register == "B" or register == "S" or register == "T" or register == "F"
+
+def typesic(instruction, parameters):
+    opcode = myDict[instruction][2]
+    fields = myDict[instruction][0]
+    return
+
+def Type3(instruction, parameters, location, mode):
+    opcode = hextobit(myDict[instruction][2])
+    fields = myDict[instruction][0]
+    NIXBPE = ["0", "0", "0", "0", "0", "0"]
+    boundslocation = int(location, 16)
+    if boundslocation > 4095:
+        print("Address too large", instruction)
+        sys.exit(1)
+
+    checksymbol = re.search("(\w+)\s", parameters)
+    if checksymbol != None and checksymbol[1] != "":
+        symbol = checksymbol[1].upper()
+        location = labelDict[symbol]
+        location = location[3:]
+    else:
+        if instruction == "RSUB":
+            return "4f0000"
+        print("invalid symbol:", parameters)
+        sys.exit(1)
+    #set correct NIXBPE bits here
+
+    if mode == "base":
+        NIXBPE[3] = "1"
+    #X bit
+    case = re.search("(\w+),\s[xX]|^[#](\w+),\s[xX]|^[@](\w+),\s*[xX]", parameters)
+    if case != None:
+        NIXBPE[2] = "1"
+    #I bit
+    case = re.search("^[#]", parameters)
+    if case != None:
+        NIXBPE[1] = "1"
+    #N bit
+    case = re.search("^[@]", parameters)
+    if case != None:
+        NIXBPE[0] = "1"
+    #If neither N nor I are set, set both to indicate so
+    if NIXBPE[0] == "0" and  NIXBPE[1] == "0":
+        NIXBPE[0] = "1"
+        NIXBPE[1] = "1"
+
+    #return correct instruction code
+    NIXBPE = "".join([i for i in NIXBPE])
+
+
+    byte1 = str(hex(int(opcode + NIXBPE[0:2], 2))[2:])
+    if len(byte1) == 1:
+        byte1 = "0" + byte1
+    byte2 = hex(int(NIXBPE[2:], 2))[2:] + location[0]
+    byte3 = location[1:]
+    print("bytes:", byte1 + byte2 + byte3)
+    return byte1 + byte2 + byte3
+
+def Type4(instruction, parameters, location):
+    instruction = instruction[1:]
+    opcode = hextobit(myDict[instruction][2])
+    fields = myDict[instruction][0]
+    NIXBPE = ["0", "0", "0", "0", "0", "1"]
+    mode = "base"
+    #mode = findmode(instruction, parameters, location, mode)
+    #NIXBPE BITS
+    #B bit
+    if mode == "base":
+        NIXBPE[3] = "1"
+    #P bit
+    if mode == "pcrelative":
+        NIXBPE[4] = "1"
+    #X bit
+    case = re.search("(\w+),\s*[xX]|^[#](\w+),\s*[xX]|^[@](\w+),\s*[xX]", parameters)
+    if case != None:
+        NIXBPE[2] = "1"
+    #I bit
+    case = re.search("^[#]", parameters)
+    if case != None:
+        NIXBPE[1] = "1"
+    #N bit
+    case = re.search("^[@]", parameters)
+    if case != None:
+        NIXBPE[0] = "1"
+    #If neither N nor I are set, set both to indicate so
+    if NIXBPE[0] == "0" and  NIXBPE[1] == "0":
+        NIXBPE[0] = "1"
+        NIXBPE[1] = "1"
+    #return correct instruction code
+    NIXBPE = "".join([i for i in NIXBPE])
+    seg1 = hex(int(opcode + NIXBPE, 2))[2:]
+    return seg1 + location
+
+def hextobit(opcode):
+    opcode = bin(int(opcode, 16))[2:]
+    while len(opcode) < 8:
+        opcode = "0" + opcode
+    return opcode[:6]
+
+
+def main():
+    file = str(sys.argv[1])
+    obj = str(sys.argv[2])
+    f = open(file, "r")
+    next_line = f.readline()                #opens the first line
+
+    address = parse(next_line, "000000")
+    next_line = f.readline()                #read next line, parse until file
+                                            #end is reached, or "end main"
+
+    while next_line != "":
+        #this converts the starting address to the proper 5 byte form
+        address = add_int_hex(address, 0)
+        address = parse(next_line, address)
+        if address == "end":
+            break
+        next_line = f.readline()
+
+    for lineobject in lineobjectlist:
+        lineobject.printLine()
+    #Now Pass2
+
+    for lineobject in lineobjectlist:
+        getinstruction(lineobject)
+    f = open(obj, "wb")
+
+    # HNNNNNNMMMLLL
+    firstline = lineobjectlist[0]
+    lastline = lineobjectlist[len(lineobjectlist) - 1]
+    if firstline.mnemonic == "start" and firstline.label != None:
+        filename = firstline.label
+    else:
+        filename = "      "
+    while len(filename) < 6:
+        filename = filename + " "
+    if len(filename) > 6:
+        filename = filename[:6]
+    NNNNNN = filename
+    MMM = ""
+    for i in range(0, 6, 2):
+        MMM = MMM + chr(int(firstline.location[i:i+2], 16))
+    ProgramLength = int(lastline.location, 16) - int(firstline.location, 16)
+    LLL = hex(ProgramLength)[2:]
+    while len(LLL) < 6:
+        LLL = "0" + LLL
+    newLLL = ""
+    for i in range(0, 6, 2):
+        newLLL = newLLL + chr(int(LLL[i:i+2], 16))
+
+    var = "H" + NNNNNN + MMM + newLLL
+    f.write(var.encode("utf-8"))
+    print("H" + NNNNNN + MMM + newLLL)
+
+    # TAAASB
+    text = ""
+    AAA = ""
+    BBB = ""
+    loc = lineobjectlist[0].location
+    for i in range(0, 6, 2):
+        AAA = AAA + chr(int(loc[i:i+2]))
+    S = int(firstline.location, 16)
+
+    for lineobject in lineobjectlist:
+        if int(lineobject.location, 16) - int(loc, 16) < 64:
+            S = int(lineobject.location, 16) - int(loc, 16)
+            if lineobject.code != None:
+                text = text + lineobject.code
+
+        else:
+            S = chr(int(hex(S)[2:], 16))
+            BBB = binascii.unhexlify(text)
+            temp = "T" + AAA + S
+            print(temp.encode("utf-8") + BBB)
+            f.write(temp.encode("utf-8") + BBB)
+            loc = lineobject.location
+            S = int(loc, 16)
+            text = ""
+    S = chr(int(hex(S)[2:], 16))
+
+    if len(text) % 2 != 0:
+        text += "0"
+    BBB = binascii.unhexlify(text)
+    if RES == 1:
+        S = "\x03"
+    temp = "T" + AAA + S
+    f.write(temp.encode("utf-8") + BBB)
+
+
+    #EEE
+    EEE = ""
+    if lastline.parameters != None:
+        for i in range(0, 6, 2):
+            EEE = EEE + chr(int(labelDict[lastline.parameters][i:i+2], 16))
+    else:
+        EEE = MMM
+
+    temp = "E" + EEE
+    f.write(temp.encode("utf-8"))
+    f.close()
+    f.close()
+    sys.exit(0)
+if __name__ == "__main__":
+    main()
